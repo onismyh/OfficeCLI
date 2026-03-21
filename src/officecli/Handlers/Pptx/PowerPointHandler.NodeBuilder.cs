@@ -944,7 +944,7 @@ public partial class PowerPointHandler
         var solidFill = ln?.GetFirstChild<Drawing.SolidFill>();
         var rgb = solidFill?.GetFirstChild<Drawing.RgbColorModelHex>();
         if (rgb?.Val?.HasValue == true)
-            node.Format["lineColor"] = ParseHelpers.FormatHexColor(rgb.Val.Value);
+            node.Format["lineColor"] = ParseHelpers.FormatHexColor(rgb.Val.Value!);
 
         // Line opacity
         var cxnColorEl = rgb as OpenXmlElement ?? solidFill?.GetFirstChild<Drawing.SchemeColor>();

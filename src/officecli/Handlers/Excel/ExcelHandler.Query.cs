@@ -126,7 +126,7 @@ public partial class ExcelHandler
             // Include tab color
             var tabColor = ws.GetFirstChild<SheetProperties>()?.GetFirstChild<TabColor>();
             if (tabColor?.Rgb?.HasValue == true)
-                sheetNode.Format["tabColor"] = ParseHelpers.FormatHexColor(tabColor.Rgb.Value);
+                sheetNode.Format["tabColor"] = ParseHelpers.FormatHexColor(tabColor.Rgb.Value!);
 
             // Include autofilter info
             var autoFilter = ws.GetFirstChild<AutoFilter>();
