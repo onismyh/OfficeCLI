@@ -31,3 +31,9 @@ tests/
 ## Claude
 .claude/
 CLAUDE.md
+
+## Process files (local only)
+bug-reports/
+docs/
+iterations/
+scripts/
