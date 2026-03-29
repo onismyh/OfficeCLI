@@ -1033,9 +1033,9 @@ public partial class ExcelHandler
                     }
                     else
                     {
+                        // Formula written but not evaluated — will be calculated when opened in Excel
                         cell.CellValue = null;
                         cell.DataType = null;
-                        unsupported.Add($"formula not evaluated (unsupported): {value.TrimStart('=')}");
                     }
                     break;
                 case "type":
