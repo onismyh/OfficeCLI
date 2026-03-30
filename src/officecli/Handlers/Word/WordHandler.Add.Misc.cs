@@ -105,16 +105,22 @@ public partial class WordHandler
 
     private string AddHyperlink(OpenXmlElement parent, string parentPath, int? index, Dictionary<string, string> properties)
     {
-        if (!properties.TryGetValue("url", out var hlUrl) && !properties.TryGetValue("href", out hlUrl))
-            throw new ArgumentException("'url' property is required for hyperlink type");
+        var hasUrl = properties.TryGetValue("url", out var hlUrl) || properties.TryGetValue("href", out hlUrl);
+        var hasAnchor = properties.TryGetValue("anchor", out var hlAnchor) || properties.TryGetValue("bookmark", out hlAnchor);
+        if (!hasUrl && !hasAnchor)
+            throw new ArgumentException("'url' or 'anchor' property is required for hyperlink type");
 
         if (parent is not Paragraph hlPara)
             throw new ArgumentException("Hyperlinks can only be added to paragraphs: /body/p[N]");
 
-        var mainDocPart = _doc.MainDocumentPart!;
-        if (!Uri.TryCreate(hlUrl, UriKind.Absolute, out var hlUri))
-            throw new ArgumentException($"Invalid hyperlink URL '{hlUrl}'. Expected a valid absolute URI (e.g. 'https://example.com').");
-        var hlRelId = mainDocPart.AddHyperlinkRelationship(hlUri, isExternal: true).Id;
+        string? hlRelId = null;
+        if (hasUrl)
+        {
+            var mainDocPart = _doc.MainDocumentPart!;
+            if (!Uri.TryCreate(hlUrl, UriKind.Absolute, out var hlUri))
+                throw new ArgumentException($"Invalid hyperlink URL '{hlUrl}'. Expected a valid absolute URI (e.g. 'https://example.com').");
+            hlRelId = mainDocPart.AddHyperlinkRelationship(hlUri, isExternal: true).Id;
+        }
 
         var hlRProps = new RunProperties();
         if (properties.TryGetValue("color", out var hlColor))
@@ -137,10 +143,15 @@ public partial class WordHandler
             hlRProps.Italic = new Italic();
 
         var hlRun = new Run(hlRProps);
-        var hlText = properties.GetValueOrDefault("text", hlUrl);
+        var hlText = properties.GetValueOrDefault("text", hlUrl ?? hlAnchor ?? "link");
         hlRun.AppendChild(new Text(hlText) { Space = SpaceProcessingModeValues.Preserve });
 
-        var hyperlink = new Hyperlink(hlRun) { Id = hlRelId };
+        var hyperlink = new Hyperlink(hlRun);
+        if (hlRelId != null)
+            hyperlink.Id = hlRelId;
+        if (hasAnchor)
+            hyperlink.Anchor = hlAnchor;
+
         if (index.HasValue)
             hlPara.InsertAt(hyperlink, index.Value);
         else

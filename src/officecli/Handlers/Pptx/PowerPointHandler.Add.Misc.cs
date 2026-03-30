@@ -47,16 +47,16 @@ public partial class PowerPointHandler
 
                 // Connect to shapes if specified
                 var cxnDrawProps = cxnNvProps.NonVisualConnectorShapeDrawingProperties!;
-                if (properties.TryGetValue("startshape", out var startId) || properties.TryGetValue("startShape", out startId))
+                if (properties.TryGetValue("startshape", out var startId) || properties.TryGetValue("startShape", out startId)
+                    || properties.TryGetValue("from", out startId))
                 {
-                    if (!uint.TryParse(startId, out var startIdVal))
-                        throw new ArgumentException($"Invalid 'startshape' value: '{startId}'. Expected a positive integer (shape ID).");
+                    var startIdVal = ResolveShapeId(startId!, cxnShapeTree);
                     cxnDrawProps.StartConnection = new Drawing.StartConnection { Id = startIdVal, Index = 0 };
                 }
-                if (properties.TryGetValue("endshape", out var endId) || properties.TryGetValue("endShape", out endId))
+                if (properties.TryGetValue("endshape", out var endId) || properties.TryGetValue("endShape", out endId)
+                    || properties.TryGetValue("to", out endId))
                 {
-                    if (!uint.TryParse(endId, out var endIdVal))
-                        throw new ArgumentException($"Invalid 'endshape' value: '{endId}'. Expected a positive integer (shape ID).");
+                    var endIdVal = ResolveShapeId(endId!, cxnShapeTree);
                     cxnDrawProps.EndConnection = new Drawing.EndConnection { Id = endIdVal, Index = 0 };
                 }
 
@@ -131,6 +131,39 @@ public partial class PowerPointHandler
                 return $"/slide[{cxnSlideIdx}]/connector[{cxnCount}]";
     }
 
+    /// <summary>
+    /// Resolves a shape reference to an OOXML shape ID.
+    /// Accepts: plain integer (shape ID), or DOM path like /slide[1]/shape[2] (resolves Nth shape's ID).
+    /// </summary>
+    private static uint ResolveShapeId(string value, ShapeTree shapeTree)
+    {
+        // Try plain integer first (shape ID)
+        if (uint.TryParse(value, out var directId))
+        {
+            // Check if this is a 1-based shape index (small number) — resolve to actual shape ID
+            var shapes = shapeTree.Elements<Shape>().ToList();
+            if (directId >= 1 && directId <= (uint)shapes.Count)
+            {
+                var shape = shapes[(int)directId - 1];
+                return shape.NonVisualShapeProperties?.NonVisualDrawingProperties?.Id?.Value ?? directId;
+            }
+            return directId;
+        }
+
+        // Try DOM path: /slide[N]/shape[M]
+        var pathMatch = Regex.Match(value, @"/slide\[\d+\]/shape\[(\d+)\]");
+        if (pathMatch.Success)
+        {
+            var shapeIdx = int.Parse(pathMatch.Groups[1].Value);
+            var shapes = shapeTree.Elements<Shape>().ToList();
+            if (shapeIdx < 1 || shapeIdx > shapes.Count)
+                throw new ArgumentException($"Shape index {shapeIdx} out of range (total: {shapes.Count})");
+            return shapes[shapeIdx - 1].NonVisualShapeProperties?.NonVisualDrawingProperties?.Id?.Value
+                ?? throw new ArgumentException($"Shape {shapeIdx} has no ID");
+        }
+
+        throw new ArgumentException($"Invalid shape reference: '{value}'. Expected a shape index (1, 2, ...) or path (/slide[N]/shape[M]).");
+    }
 
     private string AddGroup(string parentPath, int? index, Dictionary<string, string> properties)
     {
@@ -218,7 +251,11 @@ public partial class PowerPointHandler
                 GetSlide(grpSlidePart).Save();
 
                 var grpCount = grpShapeTree.Elements<GroupShape>().Count();
-                return $"/slide[{grpSlideIdx}]/group[{grpCount}]";
+                var remainingShapes = grpShapeTree.Elements<Shape>().Count();
+                var resultPath = $"/slide[{grpSlideIdx}]/group[{grpCount}]";
+                // Warn about re-indexing: grouped shapes are removed from the shape tree
+                Console.Error.WriteLine($"  Note: {toGroup.Count} shapes moved into group. Remaining shape count: {remainingShapes}. Shape indices have been re-numbered.");
+                return resultPath;
     }
 
 
@@ -529,7 +566,7 @@ public partial class PowerPointHandler
                 zmShapeTree.AppendChild(acElement);
                 GetSlide(zmSlidePart).Save();
 
-                var zmCount = zmShapeTree.Elements<OpenXmlUnknownElement>()
+                var zmCount = zmShapeTree.ChildElements
                     .Count(e => e.LocalName == "AlternateContent");
                 return $"/slide[{zmSlideIdx}]/zoom[{zmCount}]";
     }

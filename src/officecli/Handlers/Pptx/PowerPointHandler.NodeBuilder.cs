@@ -315,11 +315,14 @@ public partial class PowerPointHandler
         var text = GetShapeText(shape);
         var name = GetShapeName(shape);
         var isTitle = IsTitle(shape);
+        var isEquation = !isTitle && shape.TextBody != null
+            && shape.TextBody.Descendants().Any(e => e.LocalName == "oMath" || e.LocalName == "oMathPara"
+                || (e.LocalName == "m" && e.NamespaceUri == "http://schemas.microsoft.com/office/drawing/2010/main"));
 
         var node = new DocumentNode
         {
             Path = $"/slide[{slideNum}]/shape[{shapeIdx}]",
-            Type = isTitle ? "title" : "textbox",
+            Type = isTitle ? "title" : isEquation ? "equation" : "textbox",
             Text = text,
             Preview = string.IsNullOrEmpty(text) ? name : (text.Length > 50 ? text[..50] + "..." : text)
         };

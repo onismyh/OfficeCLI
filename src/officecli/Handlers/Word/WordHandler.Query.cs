@@ -614,6 +614,29 @@ public partial class WordHandler
             return results;
         }
 
+        // Handle toc selector
+        if (parsed.Element is "toc" or "tableofcontents")
+        {
+            var tocParas = FindTocParagraphs();
+            for (int ti = 0; ti < tocParas.Count; ti++)
+            {
+                var tocPara = tocParas[ti];
+                var instrText = string.Join("", tocPara.Descendants<FieldCode>().Select(fc => fc.Text));
+                var tocNode = new DocumentNode { Path = $"/toc[{ti + 1}]", Type = "toc" };
+                tocNode.Text = instrText.Trim();
+
+                var levelsMatch = System.Text.RegularExpressions.Regex.Match(instrText, @"\\o\s+""([^""]+)""");
+                if (levelsMatch.Success) tocNode.Format["levels"] = levelsMatch.Groups[1].Value;
+                tocNode.Format["hyperlinks"] = instrText.Contains("\\h");
+                tocNode.Format["pageNumbers"] = !instrText.Contains("\\z");
+
+                if (parsed.ContainsText != null && !(tocNode.Text?.Contains(parsed.ContainsText, StringComparison.OrdinalIgnoreCase) ?? false))
+                    continue;
+                results.Add(tocNode);
+            }
+            return results;
+        }
+
         // Handle field selector
         if (parsed.Element == "field")
         {
@@ -752,12 +775,34 @@ public partial class WordHandler
                 or "footnote" or "endnote"
                 or "field" or "formfield" or "editable"
                 or "table" or "tbl"
+                or "toc" or "tableofcontents"
                 or "revision" or "change" or "trackchange";
         if (!isKnownType && parsed.ChildSelector == null)
         {
             var root = _doc.MainDocumentPart?.Document;
             if (root != null)
                 return GenericXmlQuery.Query(root, genericParsed.element, genericParsed.attrs, genericParsed.containsText);
+            return results;
+        }
+
+        // Handle toc query
+        if (parsed.ChildSelector == null && (parsed.Element is "toc" or "tableofcontents"))
+        {
+            var tocParas = FindTocParagraphs();
+            for (int ti = 0; ti < tocParas.Count; ti++)
+            {
+                var tocPara = tocParas[ti];
+                var instrText = string.Join("", tocPara.Descendants<FieldCode>().Select(fc => fc.Text));
+                var tocNode = new DocumentNode { Path = $"/toc[{ti + 1}]", Type = "toc" };
+                tocNode.Text = instrText.Trim();
+                var levelsMatch = System.Text.RegularExpressions.Regex.Match(instrText, @"\\o\s+""([^""]+)""");
+                if (levelsMatch.Success) tocNode.Format["levels"] = levelsMatch.Groups[1].Value;
+                tocNode.Format["hyperlinks"] = instrText.Contains("\\h");
+                tocNode.Format["pageNumbers"] = !instrText.Contains("\\z");
+                if (parsed.ContainsText != null && !(tocNode.Text?.Contains(parsed.ContainsText, StringComparison.OrdinalIgnoreCase) ?? false))
+                    continue;
+                results.Add(tocNode);
+            }
             return results;
         }
 

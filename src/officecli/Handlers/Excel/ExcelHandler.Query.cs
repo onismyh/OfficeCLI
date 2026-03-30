@@ -668,7 +668,7 @@ public partial class ExcelHandler
         var elementMatch = Regex.Match(selectorForType, @"^(\w+)");
         var elementName = elementMatch.Success ? elementMatch.Groups[1].Value : "";
         bool isKnownType = string.IsNullOrEmpty(elementName)
-            || elementName is "cell" or "row" or "sheet" or "validation" or "comment" or "note" or "table" or "listobject" or "chart" or "pivottable" or "pivot" or "shape" or "picture" or "sparkline"
+            || elementName is "cell" or "row" or "sheet" or "validation" or "comment" or "note" or "table" or "listobject" or "chart" or "pivottable" or "pivot" or "shape" or "picture" or "sparkline" or "namedrange" or "definedname"
             || (elementName.Length <= 3 && Regex.IsMatch(elementName, @"^[A-Z]+$", RegexOptions.IgnoreCase));
         if (!isKnownType)
         {
@@ -920,6 +920,40 @@ public partial class ExcelHandler
                     }
                     if (MatchesFormatAttributes(node, parsed))
                         results.Add(node);
+                }
+            }
+            return results;
+        }
+
+        // Handle namedrange / definedname queries
+        if (elementName is "namedrange" or "definedname")
+        {
+            var workbook = GetWorkbook();
+            var definedNames = workbook.GetFirstChild<DefinedNames>();
+            if (definedNames != null)
+            {
+                var allDefs = definedNames.Elements<DefinedName>().ToList();
+                for (int i = 0; i < allDefs.Count; i++)
+                {
+                    var dn = allDefs[i];
+                    var nrNode = new DocumentNode
+                    {
+                        Path = $"/namedrange[{i + 1}]",
+                        Type = "namedrange",
+                        Text = dn.InnerText ?? dn.Name?.Value ?? "",
+                        Preview = dn.InnerText
+                    };
+                    if (dn.Name?.Value != null) nrNode.Format["name"] = dn.Name.Value;
+                    nrNode.Format["ref"] = dn.InnerText ?? "";
+                    if (dn.Comment?.HasValue == true) nrNode.Format["comment"] = dn.Comment!.Value!;
+
+                    if (parsed.ValueContains != null)
+                    {
+                        var name = dn.Name?.Value ?? "";
+                        if (!name.Contains(parsed.ValueContains, StringComparison.OrdinalIgnoreCase))
+                            continue;
+                    }
+                    results.Add(nrNode);
                 }
             }
             return results;
