@@ -52,7 +52,7 @@ public partial class WordHandler
     /// Generate a self-contained HTML file that previews the Word document
     /// with formatting, tables, images, and lists.
     /// </summary>
-    public string ViewAsHtml()
+    public string ViewAsHtml(int? start = null, int? end = null)
     {
         _ctx = new HtmlRenderContext();
         var body = _doc.MainDocumentPart?.Document?.Body;

@@ -277,7 +277,7 @@ officecli mcp lmstudio     # LM Studio
 officecli mcp list         # Check registration status
 ```
 
-Exposes all document operations as tools over JSON-RPC — no shell access needed.
+Exposes 14 individual tools over JSON-RPC (`officecli_view`, `officecli_get`, `officecli_set`, `officecli_add`, `officecli_remove`, `officecli_move`, `officecli_batch`, `officecli_schema`, etc.), each with precise JSON Schema — no shell access needed.
 
 ### Direct CLI Integration
 
@@ -328,22 +328,31 @@ Every command supports `--json` for structured output. Path-based addressing mea
 
 ### Why agents love OfficeCLI
 
-- **Deterministic JSON output** -- Every command supports `--json`, returning structured data with consistent schemas. No regex parsing needed.
+- **Deterministic JSON output** -- Every command supports `--json`, returning structured data with consistent camelCase schemas. No regex parsing needed.
+- **Node echo** -- Write operations (`set`, `add`, `move`) automatically return the full updated node state in `--json` mode, saving a follow-up `get` call.
+- **Error teaching** -- Misspelling a property returns `correctedArgs` with the fix agents can retry directly. Example: `colr` → `{"correctedArgs": {"props": ["color=FF0000"]}}`.
+- **Schema self-discovery** -- `officecli schema pptx shape` returns all settable properties with types, formats, and examples as JSON. Agents know valid parameters before calling.
 - **Path-based addressing** -- Every element has a stable path (`/slide[1]/shape[2]`). Agents navigate documents without understanding XML namespaces. Note: these paths use OfficeCLI's own syntax (1-based indexing, element local names), not XPath.
 - **Progressive complexity** -- Start with L1 (read), escalate to L2 (modify), fall back to L3 (raw XML) only when needed. Minimizes token usage.
 - **Self-healing workflow** -- `validate`, `view issues`, and the help system let agents detect problems and self-correct without human intervention.
 - **Built-in help** -- When unsure about property names or value formats, run `officecli <format> set <element>` instead of guessing.
 - **Auto-install** -- No manual skill-file setup. OfficeCLI detects your AI tools and configures itself automatically.
 
-### Built-in Help
+### Built-in Help & Schema
 
-Don't guess property names — drill into the help:
+Don't guess property names — drill into the help or query the schema:
 
 ```bash
+# Human-readable help
 officecli pptx set              # All settable elements and properties
 officecli pptx set shape        # Detail for one element type
 officecli pptx set shape.fill   # One property: format and examples
 officecli docx query            # Selector reference: attributes, :contains, :has(), etc.
+
+# Machine-readable schema (for AI agents)
+officecli schema pptx           # All elements and common properties
+officecli schema pptx shape     # Detailed property definitions with types and examples
+officecli schema xlsx cell      # Excel cell properties
 ```
 
 Run `officecli --help` for the full overview.
@@ -355,16 +364,17 @@ All commands support `--json`. The general response shapes:
 **Single element** (`get --json`):
 
 ```json
-{"tag": "shape", "path": "/slide[1]/shape[1]", "attributes": {"name": "TextBox 1", "text": "Hello"}}
+{"path": "/slide[1]/shape[1]", "type": "shape", "text": "Hello", "format": {"bold": true, "color": "FF0000"}}
 ```
 
-**List of elements** (`query --json`):
+**Write operations** (`set --json`, `add --json`, `move --json`) — include the updated node:
 
 ```json
-[
-  {"tag": "paragraph", "path": "/body/p[1]", "attributes": {"style": "Heading1", "text": "Title"}},
-  {"tag": "paragraph", "path": "/body/p[5]", "attributes": {"style": "Heading1", "text": "Summary"}}
-]
+{
+  "success": true,
+  "message": "Updated /slide[1]/shape[1]: text=Hello",
+  "node": {"path": "/slide[1]/shape[1]", "type": "shape", "text": "Hello", "format": {"bold": true}}
+}
 ```
 
 **Errors** return a non-zero exit code with a structured error object including error code, suggestion, and valid values when available:
@@ -380,7 +390,27 @@ All commands support `--json`. The general response shapes:
 }
 ```
 
-Error codes: `not_found`, `invalid_value`, `unsupported_property`, `invalid_path`, `unsupported_type`, `missing_property`, `file_not_found`, `file_locked`, `invalid_selector`. Property names are auto-corrected -- misspelling a property returns a suggestion with the closest match.
+**Error correction** — misspelled properties return corrected arguments for direct retry:
+
+```json
+{
+  "success": false,
+  "error": {
+    "error": "UNSUPPORTED props: colr",
+    "code": "unsupported_property",
+    "suggestion": "color",
+    "correctedArgs": {"command": "set", "path": "/slide[1]/shape[1]", "props": ["color=FF0000"]}
+  }
+}
+```
+
+**Property discovery** — `officecli schema <format> [element]`:
+
+```json
+{"format": "pptx", "element": "shape", "properties": {"text": {"type": "string"}, "bold": {"type": "boolean", "values": ["true","false"]}, "color": {"type": "string", "format": "#RRGGBB"}}}
+```
+
+Error codes: `not_found`, `invalid_value`, `unsupported_property`, `invalid_path`, `unsupported_type`, `missing_property`, `file_not_found`, `file_locked`, `invalid_selector`. Property names are auto-corrected -- misspelling a property returns `correctedArgs` with the closest match for direct retry.
 
 **Error Recovery** -- Agents self-correct by inspecting available elements:
 
@@ -394,10 +424,10 @@ officecli get report.docx /body --depth 1 --json
 # Returns the list of available children, agent picks the right path
 ```
 
-**Mutation confirmations** (`set`, `add`, `remove`, `move`, `create` with `--json`):
+**Mutation confirmations** (`set`, `add`, `move` with `--json`) include the updated node:
 
 ```json
-{"success": true, "path": "/slide[1]/shape[1]"}
+{"success": true, "message": "Added shape at /slide[1]/shape[1]", "node": {"path": "/slide[1]/shape[1]", "type": "shape", "text": "Hello", "format": {"x": "2cm", "y": "5cm"}}}
 ```
 
 See `officecli --help` for full details on exit codes and error formats.
@@ -438,6 +468,8 @@ OFFICECLI_SKIP_UPDATE=1 officecli ...          # Skip check for one invocation (
 | [`move`](https://github.com/iOfficeAI/OfficeCLI/wiki/command-move) | Move element (`--to <parent> --index N`) |
 | [`swap`](https://github.com/iOfficeAI/OfficeCLI/wiki/command-swap) | Swap two elements |
 | [`validate`](https://github.com/iOfficeAI/OfficeCLI/wiki/command-validate) | Validate against OpenXML schema |
+| `check` | Scan for layout issues (text overflow, overlaps) |
+| `schema` | Property definitions as JSON (AI agent self-discovery) |
 | [`batch`](https://github.com/iOfficeAI/OfficeCLI/wiki/command-batch) | Multiple operations in one open/save cycle (JSON on stdin or `--input`) |
 | [`merge`](https://github.com/iOfficeAI/OfficeCLI/wiki/command-merge) | Template merge — replace `{{key}}` placeholders with JSON data |
 | [`watch`](https://github.com/iOfficeAI/OfficeCLI/wiki/command-watch) | Live HTML preview in browser with auto-refresh |

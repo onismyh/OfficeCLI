@@ -225,8 +225,40 @@ public class ResidentServer : IDisposable
 
             if (request.Json)
             {
-                // JSON mode: server builds the envelope so client just passes through
+                // JSON mode: server builds the envelope so client just passes through.
+                // If the command already produced a complete envelope (has "success" key),
+                // pass it through without re-wrapping. This allows commands like set/add/move
+                // to produce WrapEnvelopeWithNode output directly.
                 var warnings = BuildWarnings(stderr);
+                if (IsEnvelope(stdout))
+                {
+                    // Already a complete envelope — merge any stderr warnings and pass through
+                    if (warnings is { Count: > 0 })
+                    {
+                        // Inject warnings into existing envelope
+                        try
+                        {
+                            var envNode = System.Text.Json.Nodes.JsonNode.Parse(stdout)?.AsObject();
+                            if (envNode != null)
+                            {
+                                var existingWarnings = envNode["warnings"]?.AsArray();
+                                if (existingWarnings == null)
+                                {
+                                    envNode["warnings"] = System.Text.Json.JsonSerializer.SerializeToNode(warnings, AppJsonContext.Default.ListCliWarning);
+                                }
+                                else
+                                {
+                                    var newWarnings = System.Text.Json.JsonSerializer.SerializeToNode(warnings, AppJsonContext.Default.ListCliWarning)?.AsArray();
+                                    if (newWarnings != null)
+                                        foreach (var w in newWarnings) existingWarnings.Add(w!.DeepClone());
+                                }
+                                return MakeResponse(0, envNode.ToJsonString(OutputFormatter.PublicJsonOptions), "");
+                            }
+                        }
+                        catch { /* fallback to passing through as-is */ }
+                    }
+                    return MakeResponse(0, stdout, "");
+                }
                 var isFailure = string.IsNullOrEmpty(stdout) && warnings is { Count: > 0 }
                     || stdout.StartsWith("No properties applied", StringComparison.Ordinal);
                 var envelope = IsJson(stdout)
@@ -254,6 +286,19 @@ public class ResidentServer : IDisposable
     {
         var trimmed = s.AsSpan().TrimStart();
         return trimmed.Length > 0 && (trimmed[0] == '{' || trimmed[0] == '[');
+    }
+
+    /// <summary>
+    /// Checks if stdout is already a complete envelope (has "success" key at top level).
+    /// This prevents double-wrapping when ExecuteCommand produces WrapEnvelopeWithNode output.
+    /// </summary>
+    private static bool IsEnvelope(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return false;
+        var trimmed = s.AsSpan().TrimStart();
+        if (trimmed.Length == 0 || trimmed[0] != '{') return false;
+        // Quick check: look for "success" near the start of the JSON object
+        return s.Contains("\"success\"", StringComparison.Ordinal);
     }
 
     private static List<CliWarning>? BuildWarnings(string stderr)
@@ -331,8 +376,11 @@ public class ResidentServer : IDisposable
                 ExecuteValidate();
                 break;
             default:
-                Console.Error.WriteLine($"Unknown command: {request.Command}");
-                break;
+                throw new CliException($"Unknown command: {request.Command}")
+                {
+                    Code = "invalid_value",
+                    Suggestion = "Valid commands: view, get, query, set, add, remove, move, raw, raw-set, add-part, validate"
+                };
         }
     }
 
@@ -356,13 +404,13 @@ public class ResidentServer : IDisposable
                 var idx = excel.GetSheetIndex(sheetName);
                 if (idx >= 0) scrollTo = $".sheet-content[data-sheet=\"{idx}\"]";
             }
-            WatchNotifier.NotifyIfWatching(_filePath, new WatchMessage { Action = "full", FullHtml = excel.ViewAsHtml(), ScrollTo = scrollTo });
+            WatchNotifier.NotifyIfWatching(_filePath, new WatchMessage { Action = "full", FullHtml = _handler.ViewAsHtml(), ScrollTo = scrollTo });
             return;
         }
-        if (_handler is OfficeCli.Handlers.WordHandler word)
+        if (_handler is OfficeCli.Handlers.WordHandler)
         {
             var scrollTo = WatchMessage.ExtractWordScrollTarget(changedPath);
-            WatchNotifier.NotifyIfWatching(_filePath, new WatchMessage { Action = "full", FullHtml = word.ViewAsHtml(), ScrollTo = scrollTo });
+            WatchNotifier.NotifyIfWatching(_filePath, new WatchMessage { Action = "full", FullHtml = _handler.ViewAsHtml(), ScrollTo = scrollTo });
             return;
         }
         if (_handler is not OfficeCli.Handlers.PowerPointHandler ppt) return;
@@ -381,47 +429,41 @@ public class ResidentServer : IDisposable
 
     private void NotifyWatchRootChanged(int oldSlideCount)
     {
-        if (_handler is OfficeCli.Handlers.WordHandler word)
+        if (_handler is OfficeCli.Handlers.WordHandler)
         {
-            var html = word.ViewAsHtml();
+            var html = _handler.ViewAsHtml()!;
             var pageCount = System.Text.RegularExpressions.Regex.Matches(html, @"data-page=""\d+""").Count;
             var scrollTo = pageCount > 0 ? $".page[data-page=\"{pageCount}\"]" : null;
             WatchNotifier.NotifyIfWatching(_filePath, new WatchMessage { Action = "full", FullHtml = html, ScrollTo = scrollTo });
             return;
         }
-        if (_handler is OfficeCli.Handlers.ExcelHandler excel)
+        if (_handler is OfficeCli.Handlers.ExcelHandler)
         {
-            WatchNotifier.NotifyIfWatching(_filePath, new WatchMessage { Action = "full", FullHtml = excel.ViewAsHtml() });
+            WatchNotifier.NotifyIfWatching(_filePath, new WatchMessage { Action = "full", FullHtml = _handler.ViewAsHtml() });
             return;
         }
         if (_handler is not OfficeCli.Handlers.PowerPointHandler ppt) return;
         var newCount = ppt.GetSlideCount();
         if (newCount > oldSlideCount)
         {
-            var html = ppt.RenderSlideHtml(newCount);
-            if (html != null)
+            var slideHtml = ppt.RenderSlideHtml(newCount);
+            if (slideHtml != null)
             {
-                WatchNotifier.NotifyIfWatching(_filePath, new WatchMessage { Action = "add", Slide = newCount, Html = html, FullHtml = ppt.ViewAsHtml() });
+                WatchNotifier.NotifyIfWatching(_filePath, new WatchMessage { Action = "add", Slide = newCount, Html = slideHtml, FullHtml = _handler.ViewAsHtml() });
                 return;
             }
         }
         else if (newCount < oldSlideCount)
         {
-            WatchNotifier.NotifyIfWatching(_filePath, new WatchMessage { Action = "remove", Slide = oldSlideCount, FullHtml = ppt.ViewAsHtml() });
+            WatchNotifier.NotifyIfWatching(_filePath, new WatchMessage { Action = "remove", Slide = oldSlideCount, FullHtml = _handler.ViewAsHtml() });
             return;
         }
-        WatchNotifier.NotifyIfWatching(_filePath, new WatchMessage { Action = "full", FullHtml = ppt.ViewAsHtml() });
+        WatchNotifier.NotifyIfWatching(_filePath, new WatchMessage { Action = "full", FullHtml = _handler.ViewAsHtml() });
     }
 
     private void NotifyWatchFullRefresh()
     {
-        string? fullHtml = null;
-        if (_handler is OfficeCli.Handlers.PowerPointHandler ppt)
-            fullHtml = ppt.ViewAsHtml();
-        else if (_handler is OfficeCli.Handlers.ExcelHandler excel)
-            fullHtml = excel.ViewAsHtml();
-        else if (_handler is OfficeCli.Handlers.WordHandler word)
-            fullHtml = word.ViewAsHtml();
+        var fullHtml = _handler.ViewAsHtml();
         if (fullHtml != null)
             WatchNotifier.NotifyIfWatching(_filePath, new WatchMessage { Action = "full", FullHtml = fullHtml });
     }
@@ -438,13 +480,7 @@ public class ResidentServer : IDisposable
 
         if (mode!.ToLowerInvariant() is "html" or "h")
         {
-            string? html = null;
-            if (_handler is OfficeCli.Handlers.PowerPointHandler pptHandler)
-                html = pptHandler.ViewAsHtml(start, end);
-            else if (_handler is OfficeCli.Handlers.ExcelHandler excelHandler)
-                html = excelHandler.ViewAsHtml();
-            else if (_handler is OfficeCli.Handlers.WordHandler wordHandler)
-                html = wordHandler.ViewAsHtml();
+            var html = _handler.ViewAsHtml(start, end);
 
             if (html != null)
             {
@@ -467,7 +503,11 @@ public class ResidentServer : IDisposable
             }
             else
             {
-                Console.Error.WriteLine("HTML preview is only supported for .pptx, .xlsx, and .docx files.");
+                throw new CliException("HTML preview is only supported for .pptx, .xlsx, and .docx files.")
+                {
+                    Code = "unsupported_type",
+                    Suggestion = "Use a .pptx, .xlsx, or .docx file, or use mode 'text' or 'annotated' for other formats."
+                };
             }
             return;
         }
@@ -482,7 +522,11 @@ public class ResidentServer : IDisposable
             }
             else
             {
-                Console.Error.WriteLine("SVG preview is only supported for .pptx files.");
+                throw new CliException("SVG preview is only supported for .pptx files.")
+                {
+                    Code = "unsupported_type",
+                    Suggestion = "Use a .pptx file, or use mode 'text' or 'annotated' for other formats."
+                };
             }
             return;
         }
@@ -505,10 +549,17 @@ public class ResidentServer : IDisposable
                 if (_handler is OfficeCli.Handlers.WordHandler wordFormsHandler)
                     Console.WriteLine(wordFormsHandler.ViewAsFormsJson().ToJsonString(OutputFormatter.PublicJsonOptions));
                 else
-                    Console.Error.WriteLine("Forms view is only supported for .docx files.");
+                    throw new CliException("Forms view is only supported for .docx files.")
+                    {
+                        Code = "unsupported_type"
+                    };
             }
             else
-                Console.WriteLine($"Unknown mode: {mode}. Available: text, annotated, outline, stats, issues, html, forms");
+                throw new CliException($"Unknown mode: {mode}. Available: text, annotated, outline, stats, issues, html, svg, forms")
+                {
+                    Code = "invalid_value",
+                    ValidValues = ["text", "annotated", "outline", "stats", "issues", "html", "svg", "forms"]
+                };
         }
         else
         {
@@ -521,8 +572,15 @@ public class ResidentServer : IDisposable
                 "issues" or "i" => OutputFormatter.FormatIssues(_handler.ViewAsIssues(issueType, limit), format),
                 "forms" or "f" => _handler is OfficeCli.Handlers.WordHandler wfh
                     ? wfh.ViewAsForms()
-                    : "Forms view is only supported for .docx files.",
-                _ => $"Unknown mode: {mode}. Available: text, annotated, outline, stats, issues, html, forms"
+                    : throw new CliException("Forms view is only supported for .docx files.")
+                    {
+                        Code = "unsupported_type"
+                    },
+                _ => throw new CliException($"Unknown mode: {mode}. Available: text, annotated, outline, stats, issues, html, svg, forms")
+                {
+                    Code = "invalid_value",
+                    ValidValues = ["text", "annotated", "outline", "stats", "issues", "html", "svg", "forms"]
+                }
             };
             Console.WriteLine(output);
         }
@@ -554,12 +612,30 @@ public class ResidentServer : IDisposable
         var properties = req.GetProps();
         var unsupported = _handler.Set(path, properties);
         var applied = properties.Where(kv => !unsupported.Contains(kv.Key)).ToList();
-        if (applied.Count > 0)
-            Console.WriteLine($"Updated {path}: {string.Join(", ", applied.Select(kv => $"{kv.Key}={kv.Value}"))}");
-        else if (unsupported.Count > 0)
-            Console.WriteLine($"No properties applied to {path}");
+
+        var message = applied.Count > 0
+            ? $"Updated {path}: {string.Join(", ", applied.Select(kv => $"{kv.Key}={kv.Value}"))}"
+            : unsupported.Count > 0
+                ? $"No properties applied to {path}"
+                : $"Updated {path}";
+
         if (unsupported.Count > 0)
             Console.Error.WriteLine($"UNSUPPORTED props (use raw-set instead): {string.Join(", ", unsupported)}");
+
+        if (req.Json)
+        {
+            // Echo updated node in JSON mode (consistent with CLI path)
+            DocumentNode? echoNode = applied.Count > 0 ? _handler.Get(path) : null;
+            bool allFailed = applied.Count == 0 && unsupported.Count > 0;
+            if (allFailed)
+                Console.WriteLine(OutputFormatter.WrapEnvelopeError(message));
+            else
+                Console.WriteLine(OutputFormatter.WrapEnvelopeWithNode(message, echoNode));
+        }
+        else
+        {
+            Console.WriteLine(message);
+        }
     }
 
     private void ExecuteAdd(ResidentRequest req)
@@ -571,14 +647,32 @@ public class ResidentServer : IDisposable
         if (!string.IsNullOrEmpty(from))
         {
             var resultPath = _handler.CopyFrom(from, parentPath, index);
-            Console.WriteLine($"Copied to {resultPath}");
+            var message = $"Copied to {resultPath}";
+            if (req.Json)
+            {
+                var copyNode = _handler.Get(resultPath);
+                Console.WriteLine(OutputFormatter.WrapEnvelopeWithNode(message, copyNode));
+            }
+            else
+            {
+                Console.WriteLine(message);
+            }
         }
         else
         {
             var type = req.GetArg("type", "");
             var properties = req.GetProps();
             var resultPath = _handler.Add(parentPath, type, index, properties);
-            Console.WriteLine($"Added {type} at {resultPath}");
+            var message = $"Added {type} at {resultPath}";
+            if (req.Json)
+            {
+                var addNode = _handler.Get(resultPath);
+                Console.WriteLine(OutputFormatter.WrapEnvelopeWithNode(message, addNode));
+            }
+            else
+            {
+                Console.WriteLine(message);
+            }
         }
     }
 
@@ -595,7 +689,16 @@ public class ResidentServer : IDisposable
         var to = req.GetArgOrNull("to");
         var index = req.GetIntArg("index");
         var resultPath = _handler.Move(path, to, index);
-        Console.WriteLine($"Moved to {resultPath}");
+        var message = $"Moved to {resultPath}";
+        if (req.Json)
+        {
+            var moveNode = _handler.Get(resultPath);
+            Console.WriteLine(OutputFormatter.WrapEnvelopeWithNode(message, moveNode));
+        }
+        else
+        {
+            Console.WriteLine(message);
+        }
     }
 
     private void ExecuteRaw(ResidentRequest req)

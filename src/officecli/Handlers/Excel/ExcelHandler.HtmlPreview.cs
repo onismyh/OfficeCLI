@@ -15,7 +15,7 @@ public partial class ExcelHandler
     /// Supports cell formatting (font, fill, borders, alignment), merged cells,
     /// column widths, row heights, frozen panes, and sheet tab switching.
     /// </summary>
-    public string ViewAsHtml()
+    public string ViewAsHtml(int? start = null, int? end = null)
     {
         var sb = new StringBuilder();
         var sheets = GetWorksheets();

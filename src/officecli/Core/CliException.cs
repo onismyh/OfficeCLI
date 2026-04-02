@@ -20,6 +20,9 @@ public class CliException : Exception
     /// <summary>Available valid values when the error is about an invalid choice.</summary>
     public string[]? ValidValues { get; init; }
 
+    /// <summary>Corrected arguments that the caller can use to retry the command.</summary>
+    public Dictionary<string, object>? CorrectedArgs { get; init; }
+
     public CliException(string message) : base(message) { }
 
     public CliException(string message, Exception innerException) : base(message, innerException) { }

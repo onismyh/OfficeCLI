@@ -39,3 +39,13 @@ docs/
 iterations/
 scripts/
 .claude/teams/officecli-skills-iterative.json
+
+## Generated files
+*.pptx
+*.docx
+*.xlsx
+!src/**
+!skills/**/*.pptx
+
+## Skills reference (local only)
+skills/agent-architecture/

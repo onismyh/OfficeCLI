@@ -104,6 +104,17 @@ if (args.Length >= 2 && args[0] == "config")
 // Log command
 OfficeCli.Core.CliLogger.LogCommand(args);
 
+// Fast path: --version skips full CommandBuilder initialization
+if (args.Length == 1 && args[0] is "--version" or "-v")
+{
+    var asm = System.Reflection.Assembly.GetExecutingAssembly();
+    var version = System.Reflection.CustomAttributeExtensions
+        .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(asm)?.InformationalVersion
+        ?? asm.GetName().Version?.ToString() ?? "unknown";
+    Console.WriteLine(version);
+    return 0;
+}
+
 // Non-blocking update check: spawns background upgrade if stale
 if (Environment.GetEnvironmentVariable("OFFICECLI_SKIP_UPDATE") != "1")
     OfficeCli.Core.UpdateChecker.CheckInBackground();

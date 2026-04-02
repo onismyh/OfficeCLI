@@ -17,7 +17,7 @@ public partial class PowerPointHandler
     /// Each slide is rendered as an absolutely-positioned div with CSS styling.
     /// Images are embedded as base64 data URIs.
     /// </summary>
-    public string ViewAsHtml(int? startSlide = null, int? endSlide = null)
+    public string ViewAsHtml(int? start = null, int? end = null)
     {
         var sb = new StringBuilder();
         var slideParts = GetSlideParts().ToList();
@@ -57,8 +57,8 @@ public partial class PowerPointHandler
         foreach (var slidePart in slideParts)
         {
             thumbNum++;
-            if (startSlide.HasValue && thumbNum < startSlide.Value) continue;
-            if (endSlide.HasValue && thumbNum > endSlide.Value) break;
+            if (start.HasValue && thumbNum < start.Value) continue;
+            if (end.HasValue && thumbNum > end.Value) break;
 
             sb.AppendLine($"  <div class=\"thumb\" data-slide=\"{thumbNum}\">");
             sb.AppendLine("    <div class=\"thumb-inner\"></div>");
@@ -75,8 +75,8 @@ public partial class PowerPointHandler
         foreach (var slidePart in slideParts)
         {
             slideNum++;
-            if (startSlide.HasValue && slideNum < startSlide.Value) continue;
-            if (endSlide.HasValue && slideNum > endSlide.Value) break;
+            if (start.HasValue && slideNum < start.Value) continue;
+            if (end.HasValue && slideNum > end.Value) break;
 
             sb.AppendLine($"<div class=\"slide-container\" data-slide=\"{slideNum}\">");
             sb.AppendLine($"  <div class=\"slide-label\">Slide {slideNum}</div>");

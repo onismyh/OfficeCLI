@@ -16,35 +16,49 @@ public enum OutputFormat
 
 public class ViewResult
 {
+    [JsonPropertyName("view")]
     public string View { get; set; } = "";
+    [JsonPropertyName("content")]
     public string Content { get; set; } = "";
 }
 
 public class NodesResult
 {
+    [JsonPropertyName("matches")]
     public int Matches { get; set; }
+    [JsonPropertyName("results")]
     public List<DocumentNode> Results { get; set; } = new();
 }
 
 public class IssuesResult
 {
+    [JsonPropertyName("count")]
     public int Count { get; set; }
+    [JsonPropertyName("issues")]
     public List<DocumentIssue> Issues { get; set; } = new();
 }
 
 public class ErrorResult
 {
+    [JsonPropertyName("error")]
     public string Error { get; set; } = "";
+    [JsonPropertyName("code")]
     public string? Code { get; set; }
+    [JsonPropertyName("suggestion")]
     public string? Suggestion { get; set; }
+    [JsonPropertyName("help")]
     public string? Help { get; set; }
+    [JsonPropertyName("validValues")]
     public string[]? ValidValues { get; set; }
 }
 
 public class CliWarning
 {
+    [JsonPropertyName("message")]
     public string Message { get; set; } = "";
+    [JsonPropertyName("code")]
     public string? Code { get; set; }
+    [JsonPropertyName("suggestion")]
     public string? Suggestion { get; set; }
 }
 
@@ -75,7 +89,8 @@ public static class WarningContext
 
 [JsonSourceGenerationOptions(
     WriteIndented = true,
-    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(ViewResult))]
 [JsonSerializable(typeof(NodesResult))]
 [JsonSerializable(typeof(IssuesResult))]
@@ -149,6 +164,32 @@ public static class OutputFormatter
     }
 
     /// <summary>
+    /// Wraps a plain text result together with the updated node state into an envelope.
+    /// The node JSON is embedded as raw JSON (not double-escaped).
+    /// Output: { "success": true, "message": "...", "node": {...}, "warnings": [...] }
+    /// </summary>
+    public static string WrapEnvelopeWithNode(string message, DocumentNode? node, List<CliWarning>? warnings = null)
+    {
+        var envelope = new JsonObject
+        {
+            ["success"] = true,
+            ["message"] = message
+        };
+
+        if (node != null)
+        {
+            var nodeJson = FormatNode(node, OutputFormat.Json);
+            try { envelope["node"] = JsonNode.Parse(nodeJson); }
+            catch { envelope["node"] = nodeJson; }
+        }
+
+        if (warnings is { Count: > 0 })
+            envelope["warnings"] = JsonSerializer.SerializeToNode(warnings, AppJsonContext.Default.ListCliWarning);
+
+        return envelope.ToJsonString(JsonOptions);
+    }
+
+    /// <summary>
     /// Wraps a failed text result (e.g. all properties unsupported) into an envelope.
     /// Output: { "success": false, "message": "...", "warnings": [...] }
     /// </summary>
@@ -173,10 +214,30 @@ public static class OutputFormatter
     public static string WrapErrorEnvelope(Exception ex)
     {
         var errorResult = BuildErrorResult(ex);
+        var errorNode = JsonSerializer.SerializeToNode(errorResult, AppJsonContext.Default.ErrorResult)!.AsObject();
+
+        // Embed correctedArgs if present on CliException
+        if (ex is CliException { CorrectedArgs: { } correctedArgs })
+        {
+            var argsNode = new JsonObject();
+            foreach (var (key, value) in correctedArgs)
+            {
+                argsNode[key] = value switch
+                {
+                    string s => JsonValue.Create(s),
+                    string[] arr => new JsonArray(arr.Select(a => (JsonNode)JsonValue.Create(a)!).ToArray()),
+                    int i => JsonValue.Create(i),
+                    bool b => JsonValue.Create(b),
+                    _ => JsonValue.Create(value?.ToString())
+                };
+            }
+            errorNode["correctedArgs"] = argsNode;
+        }
+
         var envelope = new JsonObject
         {
             ["success"] = false,
-            ["error"] = JsonSerializer.SerializeToNode(errorResult, AppJsonContext.Default.ErrorResult)
+            ["error"] = errorNode
         };
         return envelope.ToJsonString(JsonOptions);
     }

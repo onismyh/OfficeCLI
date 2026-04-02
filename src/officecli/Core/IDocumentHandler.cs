@@ -18,6 +18,11 @@ public interface IDocumentHandler : IDisposable
     string ViewAsOutline();
     string ViewAsStats();
 
+    /// <summary>
+    /// Render the document as HTML for preview. Returns null if not supported by this handler.
+    /// </summary>
+    string? ViewAsHtml(int? start = null, int? end = null) => null;
+
     // === Structured JSON variants (for --json mode) ===
     System.Text.Json.Nodes.JsonNode ViewAsStatsJson();
     System.Text.Json.Nodes.JsonNode ViewAsOutlineJson();
